@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orman Veri Dönüştürücü (Pro Stil)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    
+    <style>
+        .drop-zone { border: 2px dashed #198754; padding: 40px; border-radius: 15px; background: #f8fff9; cursor: pointer; transition: 0.3s; }
+        .drop-zone:hover { background: #eafbe7; border-color: #146c43; transform: scale(1.01); }
+        .log-entry { margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px solid #eee; font-size: 13px; }
+        /* Yükleniyor animasyonu için */
+        .spinner-border-sm { width: 1rem; height: 1rem; border-width: 0.15em; }
+    </style>
+</head>
+<body class="bg-light">
+
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-lg border-0">
+                <div class="card-header bg-success text-white py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">🌲 Orman Depo - Pro Dönüştürücü</h5>
+                    <span class="badge bg-white text-success">v3.0 (Stil Korumalı)</span>
+                </div>
+                <div class="card-body p-4">
+                    <p class="text-center text-muted mb-4">
+                        Excel dosyalarınızı yükleyin. Sistem:<br>
+                        1. <b>Tertemiz Liste:</b> İstif, Çap, Boy, Adet listesi oluşturur.<br>
+                        2. <b>Birebir Kopya:</b> Orijinal formun kenarlıkları bozulmadan kopyasını alır.
+                    </p>
+                    
+                    <div class="drop-zone text-center mb-4" onclick="document.getElementById('fileInput').click()">
+                        <div class="mb-2" style="font-size: 30px;">📂</div>
+                        <h5 class="fw-bold text-success">Dosyaları Seçin</h5>
+                        <p class="text-muted small">Çoklu seçim yapabilirsiniz (.xlsx, .xlsm)</p>
+                        <input type="file" id="fileInput" multiple accept=".xlsx, .xls, .xlsm" style="display: none;" onchange="handleFiles(this.files)">
+                    </div>
+
+                    <div id="fileInfo" class="text-center mb-3 fw-bold text-dark" style="display:none;"></div>
+
+                    <button id="processBtn" class="btn btn-primary btn-lg w-100 disabled" onclick="processFiles()">
+                        🚀 Dönüştürmeyi Başlat
+                    </button>
+
+                    <div class="mt-4">
+                        <h6 class="text-muted">İşlem Kaydı:</h6>
+                        <div id="logArea" class="border rounded p-3 bg-white text-muted" style="height: 200px; overflow-y: auto; font-family: monospace;">
+                            Hazır bekleniyor...
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let selectedFiles = [];
+
+    function log(message, color="black") {
+        const logArea = document.getElementById('logArea');
+        const time = new Date().toLocaleTimeString();
+        logArea.innerHTML += `<div class="log-entry" style="color:${color}">[${time}] ${message}</div>`;
+        logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function handleFiles(files) {
+        selectedFiles = files;
+        if (files.length > 0) {
+            document.getElementById('processBtn').classList.remove('disabled');
+            document.getElementById('fileInfo').style.display = 'block';
+            document.getElementById('fileInfo').innerText = `${files.length} adet dosya kuyrukta.`;
+            log(`${files.length} adet dosya seçildi.`, "#0d6efd");
+        }
+    }
+
+    async function processFiles() {
+        if (selectedFiles.length === 0) return;
+
+        const zip = new JSZip();
+        const processBtn = document.getElementById('processBtn');
+        processBtn.classList.add('disabled');
+        processBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> İşleniyor...`;
+
+        log("--- İşlem Başlatılıyor ---", "black");
+
+        for (let i = 0; i < selectedFiles.length; i++) {
+            const file = selectedFiles[i];
+            
+            try {
+                // Dosyayı ArrayBuffer olarak oku (Her iki kütüphane de bunu kullanacak)
+                const arrayBuffer = await file.arrayBuffer();
+
+                // ----------------------------------------------------------------
+                // ADIM 1: SHEETJS ile VERİ OKUMA VE TEMİZ LİSTE OLUŞTURMA
+                // ----------------------------------------------------------------
+                const workbookReader = XLSX.read(arrayBuffer);
+                let sheetName = "Sayfa1";
+                if (!workbookReader.Sheets[sheetName]) {
+                    sheetName = workbookReader.SheetNames[0]; 
+                }
+                const sheet = workbookReader.Sheets[sheetName];
+
+                // Verileri Çek
+                const istifNoCell = sheet['D5'];
+                const istifNo = istifNoCell ? String(istifNoCell.v) : "BilinmeyenIstif";
+
+                const caplar = [];
+                for (let r = 9; r <= 97; r++) {
+                    const cell = sheet['B' + r];
+                    caplar.push(cell ? cell.v : 0);
+                }
+
+                const dataColumns = ['C', 'E', 'G', 'I', 'K', 'M', 'O'];
+                let orbisData = [];
+                
+                // Başlıklar
+                orbisData.push(["istifNo", "cap", "boy", "adet"]);
+
+                // Veri Tara
+                dataColumns.forEach(col => {
+                    const boyCell = sheet[col + '7'];
+                    const boy = boyCell ? boyCell.v : 0;
+
+                    for (let r = 0; r < 89; r++) { 
+                        const rowNum = r + 9;
+                        const adetCell = sheet[col + rowNum];
+                        const adet = adetCell ? adetCell.v : 0;
+                        const cap = caplar[r]; 
+
+                        if (adet && adet > 0) {
+                            orbisData.push([istifNo, cap, boy, adet]);
+                        }
+                    }
+                });
+
+                // Orbis Excelini Oluştur
+                const wbOrbis = XLSX.utils.book_new();
+                const wsOrbis = XLSX.utils.aoa_to_sheet(orbisData);
+                wsOrbis['!cols'] = [{wch:15}, {wch:10}, {wch:10}, {wch:10}];
+                XLSX.utils.book_append_sheet(wbOrbis, wsOrbis, "istifEbatExcel");
+                const orbisBuffer = XLSX.write(wbOrbis, { bookType: 'xlsx', type: 'array' });
+                
+                // ZIP'e ekle: [IstifNo].xlsx
+                zip.file(`${istifNo}.xlsx`, orbisBuffer);
+
+
+                // ----------------------------------------------------------------
+                // ADIM 2: EXCELJS ile STİL KORUYARAK KOPYALAMA
+                // ----------------------------------------------------------------
+                // Not: ExcelJS stilleri (kenarlık, renk) çok daha iyi korur.
+                
+                const workbookStyler = new ExcelJS.Workbook();
+                await workbookStyler.xlsx.load(arrayBuffer);
+
+                // Hangi sayfayı tutacağız? (Sayfa1)
+                // ExcelJS'de sayfaları döngüye alıp Sayfa1 olmayanları sileceğiz.
+                
+                let sheetToKeep = workbookStyler.getWorksheet("Sayfa1");
+                if (!sheetToKeep) {
+                    // Sayfa1 yoksa ilk sayfayı tut
+                    sheetToKeep = workbookStyler.worksheets[0];
+                }
+
+                // Silinecek sayfaları belirle
+                // (Döngüde silme yaparken index kaymasın diye tersten gitmek veya id toplamak lazım)
+                const sheetsToDelete = [];
+                workbookStyler.eachSheet((worksheet, sheetId) => {
+                    if (worksheet.name !== sheetToKeep.name) {
+                        sheetsToDelete.push(sheetId);
+                    }
+                });
+
+                // Diğer sayfaları sil
+                sheetsToDelete.forEach(id => {
+                    workbookStyler.removeWorksheet(id);
+                });
+
+                // Buffer'a yaz (Stiller korunur)
+                const ebatBuffer = await workbookStyler.xlsx.writeBuffer();
+
+                // ZIP'e ekle: [IstifNo]ebat.xlsx
+                zip.file(`${istifNo}ebat.xlsx`, ebatBuffer);
+
+
+                log(`✅ ${file.name} tamamlandı. (İstif: ${istifNo})`, "green");
+
+            } catch (err) {
+                log(`❌ Hata (${file.name}): ${err.message}`, "red");
+                console.error(err);
+            }
+        }
+
+        log("📦 ZIP oluşturuluyor...", "#ffc107");
+
+        zip.generateAsync({ type: "blob" }).then(function(content) {
+            saveAs(content, "Istif_Raporlari_Pro.zip");
+            log("🎉 İndirme Tamamlandı!", "green");
+            processBtn.innerHTML = "İşlem Tamamlandı";
+            processBtn.classList.remove('btn-primary', 'disabled');
+            processBtn.classList.add('btn-success');
+            
+            setTimeout(() => {
+                processBtn.innerText = "🚀 Dönüştürmeyi Başlat";
+                processBtn.classList.remove('btn-success');
+                processBtn.classList.add('btn-primary');
+            }, 5000);
+        });
+    }
+</script>
+
+</body>
+</html>
